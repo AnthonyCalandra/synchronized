@@ -3,75 +3,62 @@
 namespace synchronized {
 
     template <typename T>
-    class unique_synchronized;
-
-    template <typename T>
-    class synchronization_gaurd {
-        friend class unique_synchronized<T>;
-        unique_synchronized<T>& synch;
-
-        synchronization_gaurd(const synchronization_gaurd<T>&) = delete;
-        synchronization_gaurd(synchronization_gaurd<T>&&) = delete;
-
-    public:
-        explicit synchronization_gaurd(unique_synchronized<T>& synch) : synch(synch) {}
-
-        ~synchronization_gaurd() {
-            synch.mx.unlock();
-        }
-
-        T* operator->() const noexcept {
-            return std::addressof(synch.t);
-        }
-
-        operator T&() const noexcept {
-            return synch.t;
-        }
-    };
-
-    template <typename T>
-    class unique_synchronized {
-        friend class synchronization_gaurd<T>;
+    class synchronized {
         T t;
         std::mutex mx;
 
+        class synchronization_gaurd {
+            synchronized<T>& synch;
+            synchronization_gaurd(const synchronization_gaurd&) = delete;
+            synchronization_gaurd(synchronization_gaurd&&) = delete;
+
+        public:
+            explicit synchronization_gaurd(synchronized<T>& synch) : synch{synch} {}
+
+            ~synchronization_gaurd() {
+                synch.mx.unlock();
+            }
+
+            T* operator->() const noexcept {
+                return std::addressof(synch.t);
+            }
+
+            operator T&() const noexcept {
+                return synch.t;
+            }
+
+            template <typename U, typename = std::enable_if_t<
+                  std::is_same_v<T, std::remove_reference_t<U>>>>
+            synchronization_gaurd& operator =(U&& other) {
+                synch.t = std::forward<U>(other);
+                return *this;
+            }
+        };
+
     public:
-        explicit unique_synchronized(T&& t) : t(std::forward<T>(t)) {}
-        unique_synchronized(unique_synchronized<T>&) = delete;
-        unique_synchronized(unique_synchronized<T>&&) = default;
-        ~unique_synchronized() = default;
+        explicit synchronized(T t) : t{std::move(t)}, mx{} {}
 
-        synchronization_gaurd<T> operator->() {
+        synchronized(synchronized<T>&& other) : mx{} {
+            std::lock_guard<std::mutex> guard {other.mx};
+            t = std::move(other).t;
+        }
+
+        synchronized(const synchronized<T>&) = delete;
+        ~synchronized() = default;
+
+        synchronization_gaurd operator->() {
             mx.lock();
-            return synchronization_gaurd<T>{*this};
+            return synchronization_gaurd{*this};
         }
 
-        T* operator*() const noexcept {
-            return std::addressof(t);
-        }
-
-        T* get() const noexcept {
-            return std::addressof(t);
-        }
-
-        synchronization_gaurd<T> operator()() {
+        synchronization_gaurd value() {
             mx.lock();
-            return synchronization_gaurd<T>{*this};
-        }
-
-        const T& operator()() const noexcept {
-            return t;
-        }
-
-        const T& operator()(T newT) {
-            std::lock_guard<std::mutex> guard {mx};
-            t = std::move(newT);
-            return t;
+            return synchronization_gaurd{*this};
         }
     };
 
-    template <typename T, typename ...Args>
+    template <typename T, typename... Args>
     auto make_synchronized(Args&&... args) {
-        return unique_synchronized<T>(T(std::forward<Args>(args)...));
+        return synchronized<T>(T(std::forward<Args>(args)...));
     }
 }
